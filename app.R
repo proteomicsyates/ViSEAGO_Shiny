@@ -306,18 +306,19 @@ ui <- fluidPage(
                              mainPanel(
                                  br(),
 
-                                 fluidRow(column(width = 10, offset = 1,
+                                 fluidRow(column(width = 12,
                                                  "To fully explore the results of this functional analysis, a hierarchical clustering method is performed based on one of SS distances (i.e Wang) between the enriched GO terms and a chosen aggregation criteria (i.e ward.D2)."
                                  )),
-                                 fluidRow(column(width = 11, offset = 1,
+                                 fluidRow(column(width = 12,
                                                  "A table of enriched GO terms in at least one of the comparison is displayed."
                                  )),
+                                 br(),
                                  fluidRow(
                                      column(width = 12,
                                             div(dataTableOutput(outputId = "go_cluster_table"), style = "font-size: 75%; width: 75%")
                                      )
                                  ),
-                                 fluidRow(column(width = 10, offset = 1,
+                                 fluidRow(column(width = 12,
                                                  "Enriched GO terms are ranked in a dendrogram as a result of a hierarchical clustering and colored depending on their cluster assignation. Additional illustrations are displayed: the GO description of GO terms (trimmed if more than 50 characters), a heatmap of -log10(pvalue) of enrichment test for each comparison, and the Information Content (IC)."
                                  )),
                                  plotlyOutput(outputId = "go_cluster_heatmap_plot", height = "800px"),
@@ -330,7 +331,7 @@ ui <- fluidPage(
                          title="Multi Dimensional Scaling of GO terms",
 
                          br(),
-                         fluidRow(column(width = 11, offset = 1,
+                         fluidRow(column(width = 12,
                                          "Multi Dimensional Scale (MDS) plot with the overlay of GO terms clusters. It is a way to check the coherence of GO terms clusters on the MDS plot."
                          )),
                          plotlyOutput(outputId = "multi_dimensional_scaling_plot", height = "800px")
@@ -346,7 +347,7 @@ ui <- fluidPage(
                              ),
                              mainPanel(
                                  br(),
-                                 fluidRow(column(width = 11, offset = 1,
+                                 fluidRow(column(width = 12,
                                                  "A colored Multi Dimensional Scale (MDS) plot provides a representation of distances between the clusters of GO terms. Each circle represents a cluster of GO terms and its size depends on the number of GO terms that it contains. Clusters of GO terms that are close should share a functional coherence."    )),
                                  plotlyOutput(outputId = "clusters_distances_plot", height = "800px")
                              )
@@ -465,12 +466,16 @@ server <- function(input, output) {
     experiments_key <- reactiveVal()
     experiment_name <- reactiveVal()
     ontology <- reactiveVal()
+    species <- reactiveVal()
     perform_FGSEA <- reactiveVal(value = FALSE)
 
     # read input parameters ----
     read_input_params <- function(){
+        print("reading input params")
         ### ontology reactive is set to GO type selected by user ----
         ontology(input$go_type)
+        ### species ----
+        species(input$species)
         ### experiment name reactive is set to the name set by the user, and replacing spaces and commas ----
         name <- input$experiment_name
         name <- str_replace_all(name, " ", "_")
@@ -513,6 +518,7 @@ server <- function(input, output) {
     # this has to be after previous statement
     # outputOptions(output, 'all_is_ok', suspendWhenHidden = FALSE)
 
+    # START ----
     ## perform enrichment analysys either using cutoff by score or a fgsea, using ranking by score ----
     observeEvent(
         eventExpr = {
@@ -524,9 +530,9 @@ server <- function(input, output) {
 
 
             print("button start pressed")
+            print(paste("ontology:", ontology() ))
             all_is_ok <- are_input_params_ok()
             start_ok(all_is_ok)
-            browser()
 
             if(!all_is_ok){
                 return (NULL)
@@ -538,13 +544,14 @@ server <- function(input, output) {
             if (perform_FGSEA()){
                 enrichment_file_name <- "enrichment_result_FGSEA.rds"
             }
+
             enrichmentResultsfile <- get_rds_path(
                 file_name = enrichment_file_name,
                 ontology = ontology(),
+                species = species(),
                 experiment_name = experiment_name(),
                 columns_keys = experiments_key()
             )
-            browser()
             if (file.exists(enrichmentResultsfile)){
                 print(paste("previous enrichment found at", enrichmentResultsfile))
                 result <- readRDS(file = enrichmentResultsfile)
@@ -583,7 +590,7 @@ server <- function(input, output) {
                      expr = {
                          # 2. GO annotation of genes ----
                          # using global location since this file is unique by species and shared by different analysis
-                         file <- get_rds_path(paste0("uniprot2GO_", input$species, ".rds"))
+                         file <- get_rds_path(file_name = paste0("uniprot2GO_", input$species, ".rds"))
                          if(!file.exists(file)){
                              ## load GO annotations from Uniprot ----
                              ret <- ViSEAGO::annotate(
@@ -624,7 +631,13 @@ server <- function(input, output) {
                             selection <- comparison_table %>% dplyr::filter(get(comparison) <= as.numeric(input$pvalue_threshold))
                             selection <- selection %>% dplyr::pull(input$protein_column)
 
-                            topGO_data_file <- get_rds_path(paste0("enrichment_", comparison, ".rds" ), ontology(), experiment_name(), experiments_key())
+                            topGO_data_file <- get_rds_path(
+                                file_name = paste0("enrichment_", comparison, ".rds" ),
+                                ontology = ontology(),
+                                species = species(),
+                                experiment_name =  experiment_name(),
+                                columns_keys =  experiments_key()
+                            )
                             if (!file.exists(topGO_data_file)){
                                 # 3. Functional GO enrichment ----
                                 ## 3.1 GO enrichment tests ----
@@ -645,7 +658,13 @@ server <- function(input, output) {
                                 BP <- readRDS(file = topGO_data_file)
                             }
                             assign(paste0(ontology,"_",comparison), BP, envir = .GlobalEnv)
-                            enrichment_test_result_file <- get_rds_path(paste0("enrichment_result_", comparison, ".rds" ), ontology(), experiment_name(), experiments_key())
+                            enrichment_test_result_file <- get_rds_path(
+                                file_name = paste0("enrichment_result_", comparison, ".rds" ),
+                                species = species(),
+                                ontology = ontology(),
+                                experiment_name =  experiment_name(),
+                                columns_keys =  experiments_key()
+                            )
                             if (!file.exists(enrichment_test_result_file)){
                                 ### perform TopGO test using clasic algorithm ----
                                 classic<-topGO::runTest(
@@ -702,7 +721,12 @@ server <- function(input, output) {
                     table <- comparison_table[comparison_table$NORM_PVALUE_1<0.05,c("ACCESSION","NORM_PVALUE_1")]
                     data.table::setorder(table, "NORM_PVALUE_1") # order by pvalue
 
-                    enrichment_test_result_file <- get_rds_path(paste0("fgsea_result_", comparison_tag, ".rds" ), ontology(), experiment_name(), experiments_key())
+                    enrichment_test_result_file <- get_rds_path(
+                        file_name = paste0("fgsea_result_", comparison_tag, ".rds" ),
+                        species = species(),
+                        ontology = ontology(),
+                        experiment_name =  experiment_name(),
+                        columns_keys =  experiments_key())
                     if (!file.exists(enrichment_test_result_file)){
 
                         BP<-ViSEAGO::runfgsea(
@@ -797,7 +821,13 @@ server <- function(input, output) {
     calculate_semantic_similarities <- function(enrichmentResults, gene2GO, distance_type, ontology_type){
         withProgress({
 
-            file <- get_rds_path(paste0('ss_', distance_type, ".rds"), ontology_type, experiment_name(), experiments_key())
+            file <- get_rds_path(
+                file_name = paste0('ss_', distance_type, ".rds"),
+                ontology =  ontology_type,
+                species = species(),
+                experiment_name = experiment_name(),
+                columns_keys = experiments_key()
+            )
             if (file.exists(file)){
                 myGOs <- readRDS(file)
             }else{
@@ -818,7 +848,12 @@ server <- function(input, output) {
         }
         semantic_similarities <- calculate_semantic_similarities(enrichmentResults(), myGene2GO(), distance, ontology())
         withProgress({
-            plot_path <- get_rds_path(paste0('mdsplot_', distance, ".rds"), ontology(), experiment_name(), experiments_key())
+            plot_path <- get_rds_path(
+                file_name = paste0('mdsplot_', distance, ".rds"),
+                species = species(),
+                ontology =  ontology(),
+                experiment_name =  experiment_name(),
+                columns_keys =  experiments_key())
             if (file.exists(plot_path)){
                 plot <- readRDS(plot_path)
             }else{
@@ -832,12 +867,14 @@ server <- function(input, output) {
 
 
 
-    get_rds_path <- function(file_name, ontology = NULL, experiment_name = NULL, columns_keys = NULL){
-
+    get_rds_path <- function(file_name, ontology = NULL, species = NULL, experiment_name = NULL, columns_keys = NULL){
 
         folder <- 'data'
         if (!is.null(experiment_name)) {
             folder <- paste0(folder, '/', experiment_name)
+        }
+        if (!is.null(species)) {
+            folder <- paste0(folder, '/', species)
         }
         if (!is.null(ontology)) {
             folder <- paste0(folder, '/', ontology)
@@ -868,7 +905,13 @@ server <- function(input, output) {
                 aggregation_method <- input$go_cluster_heatmap_aggregation_method
                 semantic_similarities <- calculate_semantic_similarities(enrichmentResults(), myGene2GO(), distance, ontology())
 
-                cluster_file <- get_rds_path(paste0('clustering_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"), ontology(), experiment_name(), experiments_key())
+                cluster_file <- get_rds_path(
+                    file_name = paste0('clustering_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"),
+                    species = species(),
+                    ontology = ontology(),
+                    experiment_name = experiment_name(),
+                    columns_keys = experiments_key()
+                )
                 if(file.exists(cluster_file)){
                     clusters <- readRDS(file = cluster_file)
                 }else{
@@ -908,7 +951,13 @@ server <- function(input, output) {
                          show_labels <- input$go_cluster_heatmap_show_labels
                          distance <- input$go_cluster_heatmap_distance
                          aggregation_method <- input$go_cluster_heatmap_aggregation_method
-                         heatmap_file <- get_rds_path(paste0('goterms_heatmap_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"), experiment_name(), experiments_key())
+                         heatmap_file <- get_rds_path(
+                             file_name = paste0('goterms_heatmap_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"),
+                             ontology = ontology(),
+                             species = species(),
+                             experiment_name = experiment_name(),
+                             columns_keys =  experiments_key()
+                         )
                          if (file.exists(heatmap_file)){
                              heatmap <- readRDS(file = heatmap_file)
                          }else{
@@ -957,7 +1006,13 @@ server <- function(input, output) {
         show_labels <- input$go_cluster_heatmap_show_labels
         distance <- input$go_cluster_heatmap_distance
         aggregation_method <- input$go_cluster_heatmap_aggregation_method
-        cluster_table_file <- get_rds_path(paste0('goterms_heatmap_table_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"), experiment_name(), experiments_key())
+        cluster_table_file <- get_rds_path(
+            file_name = paste0('goterms_heatmap_table_', show_ic, '_', show_labels, '_',distance, '_',aggregation_method, ".rds"),
+            experiment_name = experiment_name(),
+            columns_keys = experiments_key(),
+            ontology = ontology(),
+            species = species()
+        )
         if (file.exists(cluster_table_file)){
             table_obj <- readRDS(file = cluster_table_file)
         }else{
@@ -974,9 +1029,10 @@ server <- function(input, output) {
         req(table_obj)
         table <- table_obj
         # now we filter out some columns
-        table %>% dplyr::select(!ends_with("genes") & !ends_with("genes_symbol") & !matches("definition") & !ends_with("log10_pvalue"))
+        table <- table %>% dplyr::select(!ends_with("genes") & !ends_with("genes_symbol") & !matches("definition") & !ends_with("log10_pvalue"))
         # now we filter out some columns
         # table %>% dplyr::select(!ends_with("genes") & !ends_with("genes_symbol") & !matches("definition") & !ends_with("log10_pvalue"))
+        datatable(table, options= list(rownames = FALSE) )
     },
     filter = "top",
     options = list(
