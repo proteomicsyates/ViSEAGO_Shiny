@@ -222,7 +222,7 @@ ui <- fluidPage(
                                     ),
                                     fluidRow(
                                         column(width = 12,
-                                               "Regular Enrichment Analysis refers to a GO enrichment analysis using the proteins passing a certain p-vlue threshold."
+                                               "Regular Enrichment Analysis refers to a GO enrichment analysis using the proteins passing a certain p-value threshold."
                                         )
                                     ),
                                     fluidRow(
@@ -413,8 +413,7 @@ server <- function(input, output) {
     }    )
     # 1. Genes of interest ----
     df_columns <- reactiveVal()
-    ## comparisons: names of experiments as the columns of the pvalues ----
-    comparisons <- reactiveVal()
+
 
     observeEvent(
         eventExpr = {
@@ -438,28 +437,11 @@ server <- function(input, output) {
     ## enrichment results
     enrichmentResults <- reactiveVal()
 
-    can_start <- reactiveVal()
 
-    ## listen to button to check input params to set start_analysis variable to TRUE or FALSE----
-    observeEvent(
-        eventExpr = {input$start_analysis_button},
-        handlerExpr = {
-            all_is_ok <- TRUE
-            if (experiment_name() == ""){
-                all_is_ok <- FALSE
-                showNotification("An analysis name is required", type = "error")
-            }
-            if (is.null(input$protein_column)){
-                all_is_ok <- FALSE
-                showNotification("You must specify the protein identifier column", type = "error")
-            }
-            if (is.null(input$pvalues_columns)){
-                all_is_ok <- FALSE
-                showNotification("You must specify at least one column where the p-values or scores are", type = "error")
-            }
-            can_start(all_is_ok)
-        }
-    )
+
+
+
+
 
     ### add columns of the table for selectInput for proteins ----
     observe({
@@ -477,26 +459,59 @@ server <- function(input, output) {
         default_selection <- c(default_selection, grep("prob", df_columns(), ignore.case=TRUE, value=TRUE))
         updateSelectizeInput(inputId = "pvalues_columns", choices = df_columns(), selected = default_selection)
     })
-    ### experiments key reactive is set as the indexes of the columns that are used as the protein and as the scores ----
-    experiments_key <- reactive({
+
+    ## comparisons: names of experiments as the columns of the pvalues ----
+    comparisons <- reactiveVal()
+    experiments_key <- reactiveVal()
+    experiment_name <- reactiveVal()
+    ontology <- reactiveVal()
+    perform_FGSEA <- reactiveVal(value = FALSE)
+
+    # read input parameters ----
+    read_input_params <- function(){
+        ### ontology reactive is set to GO type selected by user ----
+        ontology(input$go_type)
+        ### experiment name reactive is set to the name set by the user, and replacing spaces and commas ----
+        name <- input$experiment_name
+        name <- str_replace_all(name, " ", "_")
+        name <- str_replace_all(name, ",", ".")
+        experiment_name(name)
+        ### experiments key reactive is set as the indexes of the columns that are used as the protein and as the scores ----
         selected <- c(input$protein_column, input$pvalues_columns)
         exp_ids <- which(df_columns()  %in% selected)
         key <- paste(exp_ids, collapse = "_")
         print(paste("experiments selected: ", key))
-        key
-    })
-    ### experiment name reactive is set to the name set by the user, and replacing spaces and commas ----
-    experiment_name <- reactive({
-        name <- input$experiment_name
-        name <- str_replace_all(name, " ", "_")
-        name <- str_replace_all(name, ",", ".")
-        name
+        experiments_key(key)
+        # set comparisons, that is the columns of experiments coming from pvalues columns
+        comparisons(input$pvalues_columns)
+        # perform FGSEA
+        perform_FGSEA(input$use_ranked_list == 'FGSEA')
+    }
+
+    start_ok <- reactiveVal(value = FALSE)
+    are_input_params_ok <- function(){
+        all_is_ok <- TRUE
+        if (experiment_name() == ""){
+            all_is_ok <- FALSE
+            showNotification("An analysis name is required", type = "error")
+        }
+        if (is.null(input$protein_column)){
+            all_is_ok <- FALSE
+            showNotification("You must specify the protein identifier column", type = "error")
+        }
+        if (is.null(input$pvalues_columns)){
+            all_is_ok <- FALSE
+            showNotification("You must specify at least one column where the p-values or scores are", type = "error")
+        }
+        return(all_is_ok)
+    }
+
+    output$all_is_ok <- reactive({
+        start_ok()
     })
 
-    ## ontology reactive is set to GO type selected by user ----
-    ontology <- reactive({
-        ontology = input$go_type
-    })
+    # this has to be after previous statement
+    # outputOptions(output, 'all_is_ok', suspendWhenHidden = FALSE)
 
     ## perform enrichment analysys either using cutoff by score or a fgsea, using ranking by score ----
     observeEvent(
@@ -504,16 +519,23 @@ server <- function(input, output) {
             input$start_analysis_button
         },
         handlerExpr = {
+            # read input params and set the corresponding reactive variables
+            read_input_params()
+
+
             print("button start pressed")
-            if(!can_start()){
+            all_is_ok <- are_input_params_ok()
+            start_ok(all_is_ok)
+            browser()
+
+            if(!all_is_ok){
                 return (NULL)
             }
-            browser()
-            # set comparisons
-            comparisons(input$pvalues_columns)
+
+
             # look for the enrichment result if present
             enrichment_file_name <- "enrichment_result.rds"
-            if (input$use_ranked_list == "FGSEA"){
+            if (perform_FGSEA()){
                 enrichment_file_name <- "enrichment_result_FGSEA.rds"
             }
             enrichmentResultsfile <- get_rds_path(
@@ -521,20 +543,21 @@ server <- function(input, output) {
                 ontology = ontology(),
                 experiment_name = experiment_name(),
                 columns_keys = experiments_key()
-                )
+            )
+            browser()
             if (file.exists(enrichmentResultsfile)){
                 print(paste("previous enrichment found at", enrichmentResultsfile))
                 result <- readRDS(file = enrichmentResultsfile)
             }else{
                 print("previous enrichment not found, doing it now...")
                 myGene2GO <- myGene2GO()
-                if (input$use_ranked_list != "FGSEA"){
+                if (!perform_FGSEA()){
                     background <- background()
                     result <- perform_enrichment(background, myGene2GO, ontology())
                 }else{
                     result <- perform_fgsea(myGene2GO, ontology())
                 }
-                browser()
+
                 if (!is.null(result)){
                     saveRDS(result, file = enrichmentResultsfile)
                 }
@@ -581,12 +604,11 @@ server <- function(input, output) {
             {
                 withProgress(
 
-                    min = 1,
+                    min = 0,
                     max = length(comparisons()) + 1,
                     message = paste0("Performing GO (", ontology, ") enrichment analysis"),
                     detail = "This may take a minute for the first time",
                     {
-                        browser()
                         i <- 1
                         for(comparison in comparisons()){
                             incProgress(amount = 1, message = paste("Enrichment analysis of", comparison))
@@ -737,20 +759,28 @@ server <- function(input, output) {
         },
         content = function(con){
             results <- enrichmentResults()
-            table <- results@data # table
-            write.table(table, con, sep = "\t")
+            if(!is.null(results)) {
+                table <- results@data # table
+                write.table(table, con, sep = "\t")
+            }
         },
         contentType = "text/csv"
     )
     ## show go count ----
     output$go_count_plot <- renderPlotly({
         results <- enrichmentResults()
+        if(is.null(results)){
+            return (NULL)
+        }
         ViSEAGO::GOcount(results)
     })
 
     ## show upset ----
     output$upset_plot <- renderPlot({
         results <- enrichmentResults()
+        if (is.null(results)) {
+            return(NULL)
+        }
         tmp <- as_tibble(results@data)
         tmp <- tmp %>% dplyr::select(ends_with(".pvalue"))
         names(tmp) <- str_replace(names(tmp), ".pvalue", "")
@@ -777,12 +807,15 @@ server <- function(input, output) {
                 saveRDS(myGOs, file = file)
                 return(myGOs)
             }
-        },message = paste("Calculating enriched GO terms semantic distances using distance:",distance_type), detail = "Please wait a second")
+        },message = paste("Calculating enriched GO terms semantic distances using distance:",distance_type), detail = "Please wait some seconds...")
 
     }
     ## semantic similarities MD plot ----
     output$ss_md_plot <- renderPlotly({
         distance <- input$ss_distance
+        if (is.null(enrichmentResults())) {
+            return(NULL)
+        }
         semantic_similarities <- calculate_semantic_similarities(enrichmentResults(), myGene2GO(), distance, ontology())
         withProgress({
             plot_path <- get_rds_path(paste0('mdsplot_', distance, ".rds"), ontology(), experiment_name(), experiments_key())
@@ -824,8 +857,11 @@ server <- function(input, output) {
     go_clusters_RV <- reactive({
         withProgress(
             message = "Clustering GO terms",
-            detail = "Please wait...",
+            detail = "Please wait some seconds...",
             {
+                if (is.null(enrichmentResults())) {
+                    return(NULL)
+                }
                 show_ic <- input$go_cluster_heatmap_show_ic
                 show_labels <- input$go_cluster_heatmap_show_labels
                 distance <- input$go_cluster_heatmap_distance
@@ -981,7 +1017,7 @@ server <- function(input, output) {
         distance <- input$go_cluster_similarities_distance
         withProgress(
             message = paste("Calculating distances between clusters of GO terms using", distance),
-            detail = "Please wait a second",
+            detail = "Please wait some seconds...",
             {
                 cluster_distances_file_name <- paste0("cluster_ss_", distance, ".rds")
                 cluster_distances_file <- get_rds_path(
