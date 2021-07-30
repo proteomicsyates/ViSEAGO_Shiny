@@ -42,8 +42,30 @@ organisms <- organisms$x$data$`!annotation_set`
 ui <- fluidPage(
 
     # Application title
-    titlePanel("GO analysis with VISEAGO"),
+    titlePanel("Gene Ontology Enrichment Analysis with ViSEAGO"),
     tabsetPanel(
+        tabPanel("Welcome",
+                 wellPanel(
+                     style = "background: white",
+                     h4("This is the Shiny R ViSEAGO interface developed in Yates Lab"),
+                     br(),
+                     HTML("<b>V</b>isualization, <b>S</b>emantic similarity and <b>E</b>nrichment <b>A</b>nalysis of <b>G</b>ene <b>O</b>ntology"),
+                     tags$hr(),
+                     "The main objective of ViSEAGO package is to carry out a data mining of biological functions and establish links between genes involved in the study. ",
+                     "ViSEAGO is developed in R to facilitate functional Gene Ontology (GO) analysis of complex experimental design with multiple comparisons of interest. ",
+                     "It allows to study large-scale datasets together and visualize GO profiles to capture biological knowledge.",
+                     br(),
+                     "The acronym stands for three major concepts of the analysis: Visualization, Semantic similarity and Enrichment Analysis of Gene Ontology.",
+                     br(),
+                     "It provides access to the last current GO annotations, which are retrieved from one of NCBI EntrezGene, Ensembl or Uniprot databases for several species.",
+                     br(),
+                     "Using available R packages and novel developments, ViSEAGO extends classical functional GO analysis to focus on functional coherence by aggregating closely related biological themes while studying multiple datasets at once. ",
+                     "It provides both a synthetic and detailed view using interactive functionalities respecting the GO graph structure and ensuring functional coherence supplied by semantic similarity.",
+                     tags$hr(),
+                     "For more information about ViSEAGO, go to ",
+                     a("ViSEAGO BioConductor R package page", href = "https://www.bioconductor.org/packages/release/bioc/html/ViSEAGO.html", target = "_blank")
+                 )
+        ),
         # upload file panel ----
         tabPanel("Upload file",
                  # Sidebar layout with input and output definitions ----
@@ -51,7 +73,7 @@ ui <- fluidPage(
                      # Sidebar panel for inputs ----
                      sidebarPanel(
                          # Input: Select a file ----
-                         fileInput("file1", "Choose text File",
+                         fileInput("file1", "Choose text file",
                                    multiple = FALSE,
                                    accept = c("text/csv",
                                               "text/tsv",
@@ -61,10 +83,15 @@ ui <- fluidPage(
                                               ".tsv")
                          ),
                          "Input file is a text separated file. Select it here, then, select the appropriate options below to read it while you see the preview on the right.",
+                         br(),
+                         "It must have a column with Uniprot Protein accessions and then additional columns with p-values that define differentially expressed (DE) proteins.",
+                         br(),
+                         "Proteins not passing a defined threshold on these p-values (not DE) will be used in the regular enrichment analysis as background",
 
                          # Horizontal line ----
                          tags$hr(),
 
+                         h4("How to import the file:"),
                          # Input: Checkbox if file has header ----
                          checkboxInput("header", "File has header", TRUE),
 
@@ -208,8 +235,8 @@ ui <- fluidPage(
                                     ),
                                     fluidRow(
                                         column(width = 12,
-                                               HTML("This is the p-value which will determine which proteins are considered by the analysis among all the list in the input file<br>
-                                         The whole list of proteins (with no threshold) will be considered as the background:")
+                                               HTML("P-value threshold to consider differentially expressed proteins in the Regular Enrichment Analysis. Proteins not passing this threshold will be considered as background.<br>
+                                                    This threshold will be ignored when selecting FGSEA analysis.")
                                         )
                                     ),
                              ),
@@ -217,12 +244,12 @@ ui <- fluidPage(
 
                                     fluidRow(
                                         column(width = 12,
-                                               radioButtons(inputId = "use_ranked_list", label = "Type of analysis", choices = c("Regular Enrichment Analysis" = "regular",  "FSGEA" = "FSGEA"))
+                                               radioButtons(inputId = "use_ranked_list", label = "Type of analysis", choices = c("Regular Enrichment Analysis" = "regular",  "FGSEA" = "FGSEA"))
                                         )
                                     ),
                                     fluidRow(
                                         column(width = 12,
-                                               "Regular Enrichment Analysis refers to a GO enrichment analysis using the proteins passing a certain p-value threshold."
+                                               "Regular Enrichment Analysis refers to a GO enrichment analysis using the proteins passing a certain p-value threshold. Proteins not passing that threshold will be considered background."
                                         )
                                     ),
                                     fluidRow(
@@ -318,10 +345,12 @@ ui <- fluidPage(
                                             div(dataTableOutput(outputId = "go_cluster_table"), style = "font-size: 75%; width: 75%")
                                      )
                                  ),
+                                 br(),
+                                 br(),
                                  fluidRow(column(width = 12,
                                                  "Enriched GO terms are ranked in a dendrogram as a result of a hierarchical clustering and colored depending on their cluster assignation. Additional illustrations are displayed: the GO description of GO terms (trimmed if more than 50 characters), a heatmap of -log10(pvalue) of enrichment test for each comparison, and the Information Content (IC)."
                                  )),
-                                 plotlyOutput(outputId = "go_cluster_heatmap_plot", height = "800px"),
+                                 plotlyOutput(outputId = "go_cluster_heatmap_plot", height = "1200px"),
 
                                  width = 10
                              )
@@ -401,16 +430,14 @@ server <- function(input, output) {
         if(input$disp == "head") {
             table <- head(df)
         }
-        datatable(table, rownames = FALSE)
+        datatable(table, rownames = FALSE,filter = 'top',  options = list(autoWidth = TRUE))
 
     })
 
 
-
-
     output$text_guide <- renderText({
         req(input_df())
-        paste("Go to next tab ('Select columns to analyze') to choose the columns where the proteins are")
+        paste("Go to next tab ('Select input columns') to choose the columns where the proteins are")
     }    )
     # 1. Genes of interest ----
     df_columns <- reactiveVal()
@@ -538,7 +565,6 @@ server <- function(input, output) {
                 return (NULL)
             }
 
-
             # look for the enrichment result if present
             enrichment_file_name <- "enrichment_result.rds"
             if (perform_FGSEA()){
@@ -550,7 +576,8 @@ server <- function(input, output) {
                 ontology = ontology(),
                 species = species(),
                 experiment_name = experiment_name(),
-                columns_keys = experiments_key()
+                columns_keys = experiments_key(),
+                fgsea = perform_FGSEA()
             )
             if (file.exists(enrichmentResultsfile)){
                 print(paste("previous enrichment found at", enrichmentResultsfile))
@@ -636,7 +663,8 @@ server <- function(input, output) {
                                 ontology = ontology(),
                                 species = species(),
                                 experiment_name =  experiment_name(),
-                                columns_keys =  experiments_key()
+                                columns_keys =  experiments_key(),
+                                fgsea = perform_FGSEA()
                             )
                             if (!file.exists(topGO_data_file)){
                                 # 3. Functional GO enrichment ----
@@ -663,7 +691,8 @@ server <- function(input, output) {
                                 species = species(),
                                 ontology = ontology(),
                                 experiment_name =  experiment_name(),
-                                columns_keys =  experiments_key()
+                                columns_keys =  experiments_key(),
+                                fgsea = perform_FGSEA()
                             )
                             if (!file.exists(enrichment_test_result_file)){
                                 ### perform TopGO test using clasic algorithm ----
@@ -706,31 +735,35 @@ server <- function(input, output) {
     ## function perform_enrichment
     perform_fgsea <- function(gene2GO, ontology){
         withProgress(
-            min = 1,
+            min = 0,
             max = length(comparisons())+1,
             message = "Performing enrichment analysis",
             detail = "This may take a minute for the first time",
             {
+                browser()
                 i <- 1
                 for(comparison in comparisons()){
-                    comparison_tag <- df_columns()[i]
 
-                    incProgress(amount = 1, message = paste("fgsea analysis of", comparison_tag))
-                    comparison_table <- list_all()[[comparison]]
-                    comparison_table$NORM_PVALUE_1 <- as.numeric(comparison_table$NORM_PVALUE_1)
-                    table <- comparison_table[comparison_table$NORM_PVALUE_1<0.05,c("ACCESSION","NORM_PVALUE_1")]
-                    data.table::setorder(table, "NORM_PVALUE_1") # order by pvalue
+
+                    incProgress(amount = 1, message = paste("fgsea analysis of", comparison))
+
+                    comparison_table <- input_df() %>% dplyr::select(input$protein_column, comparison)
+                    comparison_table <- comparison_table %>% dplyr::filter(!is.na(comparison))
+                    # sort by comparison column ascending order
+                    comparison_table <- as.data.table(comparison_table %>% arrange(comparison))
 
                     enrichment_test_result_file <- get_rds_path(
-                        file_name = paste0("fgsea_result_", comparison_tag, ".rds" ),
+                        file_name = paste0("fgsea_result_", comparison, ".rds" ),
                         species = species(),
                         ontology = ontology(),
                         experiment_name =  experiment_name(),
-                        columns_keys =  experiments_key())
+                        columns_keys =  experiments_key(),
+                        fgsea = perform_FGSEA()
+                    )
                     if (!file.exists(enrichment_test_result_file)){
 
                         BP<-ViSEAGO::runfgsea(
-                            geneSel=table,
+                            geneSel=comparison_table,
                             ont=ontology,
                             gene2GO=gene2GO,
                             method ="fgseaMultilevel",
@@ -739,25 +772,26 @@ server <- function(input, output) {
                                 minSize=5
                             )
                         )
-                        assign(paste0(ontology,"_",comparison_tag), BP)
+
 
 
                         saveRDS(BP, file = enrichment_test_result_file)
                     }else{
                         BP <- readRDS(file = enrichment_test_result_file)
                     }
-
+                    assign(paste0(ontology,"_",comparison), BP, envir = .GlobalEnv)
 
                     i <- i + 1
                 }
 
                 input_list <- list()
-                for(comparison_tag in df_columns()){
-                    input_list[[comparison_tag]] <- paste0(ontology,"_",comparison_tag)
+                for(comparison in comparisons()){
+                    input_list[[comparison]] <- paste0(ontology,"_",comparison)
                 }
                 incProgress(amount = 1, message = "Merging all enrichments")
                 ViSEAGO::merge_enrich_terms(
-                    Input=input_list
+                    Input = input_list,
+                    envir = .GlobalEnv
                 )
             })
     }
@@ -826,7 +860,8 @@ server <- function(input, output) {
                 ontology =  ontology_type,
                 species = species(),
                 experiment_name = experiment_name(),
-                columns_keys = experiments_key()
+                columns_keys = experiments_key(),
+                fgsea = perform_FGSEA()
             )
             if (file.exists(file)){
                 myGOs <- readRDS(file)
@@ -853,7 +888,9 @@ server <- function(input, output) {
                 species = species(),
                 ontology =  ontology(),
                 experiment_name =  experiment_name(),
-                columns_keys =  experiments_key())
+                columns_keys =  experiments_key(),
+                fgsea = perform_FGSEA()
+            )
             if (file.exists(plot_path)){
                 plot <- readRDS(plot_path)
             }else{
@@ -867,11 +904,14 @@ server <- function(input, output) {
 
 
 
-    get_rds_path <- function(file_name, ontology = NULL, species = NULL, experiment_name = NULL, columns_keys = NULL){
+    get_rds_path <- function(file_name, ontology = NULL, species = NULL, experiment_name = NULL, columns_keys = NULL, fgsea = NULL){
 
         folder <- 'data'
         if (!is.null(experiment_name)) {
             folder <- paste0(folder, '/', experiment_name)
+        }
+        if(!is.null(columns_keys)) {
+            folder <- paste0(folder, '/', columns_keys)
         }
         if (!is.null(species)) {
             folder <- paste0(folder, '/', species)
@@ -879,8 +919,10 @@ server <- function(input, output) {
         if (!is.null(ontology)) {
             folder <- paste0(folder, '/', ontology)
         }
-        if(!is.null(columns_keys)) {
-            folder <- paste0(folder, '/', columns_keys)
+        if (!is.null(fgsea) && fgsea) {
+            folder <- paste0(folder, '/FGSEA')
+        } else {
+            folder <- paste0(folder, '/DE')
         }
 
         if(!dir.exists(folder)){
@@ -910,7 +952,8 @@ server <- function(input, output) {
                     species = species(),
                     ontology = ontology(),
                     experiment_name = experiment_name(),
-                    columns_keys = experiments_key()
+                    columns_keys = experiments_key(),
+                    fgsea = perform_FGSEA()
                 )
                 if(file.exists(cluster_file)){
                     clusters <- readRDS(file = cluster_file)
@@ -956,7 +999,8 @@ server <- function(input, output) {
                              ontology = ontology(),
                              species = species(),
                              experiment_name = experiment_name(),
-                             columns_keys =  experiments_key()
+                             columns_keys =  experiments_key(),
+                             fgsea = perform_FGSEA()
                          )
                          if (file.exists(heatmap_file)){
                              heatmap <- readRDS(file = heatmap_file)
@@ -1011,7 +1055,8 @@ server <- function(input, output) {
             experiment_name = experiment_name(),
             columns_keys = experiments_key(),
             ontology = ontology(),
-            species = species()
+            species = species(),
+            fgsea = perform_FGSEA()
         )
         if (file.exists(cluster_table_file)){
             table_obj <- readRDS(file = cluster_table_file)
@@ -1023,7 +1068,7 @@ server <- function(input, output) {
     })
 
     # render table of GO clusters----
-    output$go_cluster_table <- renderDT({
+    output$go_cluster_table <- renderDataTable({
         table_obj <- clusters_table_obj()
 
         req(table_obj)
@@ -1032,13 +1077,8 @@ server <- function(input, output) {
         table <- table %>% dplyr::select(!ends_with("genes") & !ends_with("genes_symbol") & !matches("definition") & !ends_with("log10_pvalue"))
         # now we filter out some columns
         # table %>% dplyr::select(!ends_with("genes") & !ends_with("genes_symbol") & !matches("definition") & !ends_with("log10_pvalue"))
-        datatable(table, options= list(rownames = FALSE) )
-    },
-    filter = "top",
-    options = list(
-        pageLength = 5,
-        rownames = FALSE
-    ))
+        DT::datatable(table, rownames = FALSE)
+    })
 
     # download table of clusters of GO terms
     output$go_cluster_table_download <- downloadHandler(
@@ -1080,7 +1120,8 @@ server <- function(input, output) {
                     file_name = cluster_distances_file_name,
                     ontology = ontology(),
                     experiment_name = experiment_name(),
-                    columns_keys = experiments_key()
+                    columns_keys = experiments_key(),
+                    fgsea = perform_FGSEA()
                 )
                 if (!file.exists(cluster_distances_file)){
                     # calculate semantic similarities between GO clusters ----
